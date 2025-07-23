@@ -3,25 +3,36 @@ from huggingface_hub import snapshot_download
 import subprocess
 import uuid
 from pathlib import Path as SysPath
+def download_if_not_exists(repo_id, local_dir):
+    if os.path.exists(local_dir) and os.listdir(local_dir):
+        print(f"✅ 模型已存在，跳过下载: {local_dir}")
+        return
+    print(f"🔽 正在下载模型: {repo_id}")
+    snapshot_download(
+        repo_id=repo_id,
+        local_dir=local_dir,
+        local_dir_use_symlinks=False
+    )
 
+# 用法：
 # class Predictor(BasePredictor):
 #     def setup(self):
-#         print("🔽 正在下载模型...")
-#         snapshot_download(
-#             repo_id="OmniAvatar/OmniAvatar-1.3B",
-#             local_dir="pretrained_models/OmniAvatar-1.3B",
-#             local_dir_use_symlinks=False
-#         )
-#         snapshot_download(
-#             repo_id="Wan-AI/Wan2.1-T2V-1.3B",
-#             local_dir="pretrained_models/Wan2.1-T2V-1.3B",
-#             local_dir_use_symlinks=False
-#         )
-#         snapshot_download(
-#             repo_id="facebook/wav2vec2-base-960h",
-#             local_dir="pretrained_models/wav2vec2-base-960h",
-#             local_dir_use_symlinks=False
-#         )
+        # print("🔽 正在下载模型...")
+        # snapshot_download(
+        #     repo_id="OmniAvatar/OmniAvatar-1.3B",
+        #     local_dir="pretrained_models/OmniAvatar-1.3B",
+        #     local_dir_use_symlinks=False
+        # )
+        # snapshot_download(
+        #     repo_id="Wan-AI/Wan2.1-T2V-1.3B",
+        #     local_dir="pretrained_models/Wan2.1-T2V-1.3B",
+        #     local_dir_use_symlinks=False
+        # )
+        # snapshot_download(
+        #     repo_id="facebook/wav2vec2-base-960h",
+        #     local_dir="pretrained_models/wav2vec2-base-960h",
+        #     local_dir_use_symlinks=False
+        # )
 
 #     def predict(self, prompt: str = Input(description="Text + image + audio triple prompt")) -> Path:
 #         input_dir = SysPath("tmp_inputs")
@@ -64,22 +75,25 @@ import shutil
 class Predictor(BasePredictor):
     def setup(self):
         print("🚀 初始化模型...")
-        
+        download_if_not_exists("OmniAvatar/OmniAvatar-1.3B", "pretrained_models/OmniAvatar-1.3B")
+        download_if_not_exists("Wan-AI/Wan2.1-T2V-1.3B", "pretrained_models/Wan2.1-T2V-1.3B")
+        download_if_not_exists("facebook/wav2vec2-base-960h", "pretrained_models/wav2vec2-base-960h")
         self.args = get_args()
         self.pipe = WanInferencePipeline(self.args)
         set_seed(self.args.seed)
 
-    def predict(self, prompt: str = Input(description="格式为: 文本@@图像路径@@音频路径")) -> Path:
+    def predict(
+        self,
+        prompt: str = Input(description="文本提示"),
+        image_path: str = Input(default=None, description="图像路径"),
+        audio_path: str = Input(default=None, description="音频路径"),
+    ) -> Path:
         print("📝 接收输入:", prompt)
-        parts = prompt.strip().split("@@")
-        if len(parts) == 1:
-            text, image_path, audio_path = parts[0], None, None
-        elif len(parts) == 2:
-            text, image_path, audio_path = parts[0], parts[1], None
-        elif len(parts) == 3:
-            text, image_path, audio_path = parts[0], parts[1], parts[2]
-        else:
-            raise ValueError("Prompt 格式错误，应为 prompt@@image@@audio")
+        text = prompt
+        if image_path and not os.path.exists(image_path):
+            raise FileNotFoundError(f"图像路径无效: {image_path}")
+        if audio_path and not os.path.exists(audio_path):
+            raise FileNotFoundError(f"音频路径无效: {audio_path}")
 
         output_dir = f"outputs/{uuid.uuid4().hex}"
         os.makedirs(output_dir, exist_ok=True)
