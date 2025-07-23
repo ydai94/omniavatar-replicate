@@ -1,3 +1,5 @@
+torch
+torchvision
 librosa==0.10.2.post1
 tqdm
 peft==0.15.1
@@ -7,3 +9,7 @@ numpy==1.26.4
 xfuser==0.4.1
 ftfy
 einops
+diffusers
+accelerate
+huggingface_hub
+soundfile

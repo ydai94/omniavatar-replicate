@@ -1,63 +1,123 @@
+from cog import BasePredictor, Input, Path
+from huggingface_hub import snapshot_download
 import subprocess
 import uuid
-from pathlib import Path
+from pathlib import Path as SysPath
+
+# class Predictor(BasePredictor):
+#     def setup(self):
+#         print("🔽 正在下载模型...")
+#         snapshot_download(
+#             repo_id="OmniAvatar/OmniAvatar-1.3B",
+#             local_dir="pretrained_models/OmniAvatar-1.3B",
+#             local_dir_use_symlinks=False
+#         )
+#         snapshot_download(
+#             repo_id="Wan-AI/Wan2.1-T2V-1.3B",
+#             local_dir="pretrained_models/Wan2.1-T2V-1.3B",
+#             local_dir_use_symlinks=False
+#         )
+#         snapshot_download(
+#             repo_id="facebook/wav2vec2-base-960h",
+#             local_dir="pretrained_models/wav2vec2-base-960h",
+#             local_dir_use_symlinks=False
+#         )
+
+#     def predict(self, prompt: str = Input(description="Text + image + audio triple prompt")) -> Path:
+#         input_dir = SysPath("tmp_inputs")
+#         input_dir.mkdir(exist_ok=True)
+#         input_file = input_dir / f"{uuid.uuid4().hex}.txt"
+#         input_file.write_text(prompt.strip())
+
+#         cmd = [
+#             "torchrun",
+#             "--standalone",
+#             "--nproc_per_node=1",
+#             "scripts/inference.py",
+#             "--config", "configs/inference_1.3B.yaml",
+#             "--input_file", str(input_file)
+#         ]
+
+#         result = subprocess.run(cmd, capture_output=True, text=True)
+#         print("STDOUT:", result.stdout)
+#         print("STDERR:", result.stderr)
+
+#         output_dir = SysPath("output")
+#         if output_dir.exists():
+#             files = sorted(output_dir.glob("*.png"))
+#             if files:
+#                 return Path(str(files[0]))
+
+#         raise RuntimeError("No output file generated.")
+
+from cog import BasePredictor, Input, Path
+from inference import WanInferencePipeline, set_seed
+from OmniAvatar.utils.args_config import parse_args
+from OmniAvatar.utils.audio_preprocess import add_silence_to_audio_ffmpeg
+from OmniAvatar.utils.io_utils import save_video_as_grid_and_mp4
+
+import os
+import uuid
+import torch
 import shutil
 
-from huggingface_hub import snapshot_download
+class Predictor(BasePredictor):
+    def setup(self):
+        print("🚀 初始化模型...")
+        self.args = parse_args()
+        self.args.input_file = None  # 禁止批处理
+        self.args.debug = True       # 允许输出
+        self.pipe = WanInferencePipeline(self.args)
+        set_seed(self.args.seed)
 
-def predict(prompt: str):
-    model_dir = snapshot_download(
-        repo_id="OmniAvatar/OmniAvatar-1.3B",
-        local_dir="pretrained_models/OmniAvatar-1.3B",
-        local_dir_use_symlinks=False
-    )
+    def predict(self, prompt: str = Input(description="格式为: 文本@@图像路径@@音频路径")) -> Path:
+        print("📝 接收输入:", prompt)
+        parts = prompt.strip().split("@@")
+        if len(parts) == 1:
+            text, image_path, audio_path = parts[0], None, None
+        elif len(parts) == 2:
+            text, image_path, audio_path = parts[0], parts[1], None
+        elif len(parts) == 3:
+            text, image_path, audio_path = parts[0], parts[1], parts[2]
+        else:
+            raise ValueError("Prompt 格式错误，应为 prompt@@image@@audio")
 
-    print(f"✅ 模型已下载至: {model_dir}")
+        output_dir = f"outputs/{uuid.uuid4().hex}"
+        os.makedirs(output_dir, exist_ok=True)
 
-    model_dir = snapshot_download(
-        repo_id="Wan-AI/Wan2.1-T2V-1.3B",
-        local_dir="pretrained_models/Wan2.1-T2V-1.3B",
-        local_dir_use_symlinks=False
-    )
+        # 添加静音段
+        if self.args.silence_duration_s > 0 and audio_path:
+            input_audio_path = os.path.join(output_dir, "audio_input.wav")
+            add_silence_to_audio_ffmpeg(audio_path, input_audio_path, self.args.silence_duration_s)
+        else:
+            input_audio_path = audio_path
 
-    print(f"✅ 模型已下载至: {model_dir}")
+        print("🎬 开始生成视频...")
+        video = self.pipe(
+            prompt=text,
+            image_path=image_path,
+            audio_path=input_audio_path,
+            seq_len=self.args.seq_len
+        )
 
-    model_dir = snapshot_download(
-        repo_id="facebook/wav2vec2-base-960h",
-        local_dir="pretrained_models/wav2vec2-base-960h",
-        local_dir_use_symlinks=False
-    )
+        # 添加一帧延迟音频
+        if audio_path and self.args.use_audio:
+            audio_out_path = os.path.join(output_dir, "audio_out.wav")
+            add_silence_to_audio_ffmpeg(audio_path, audio_out_path, 1.0 / self.args.fps + self.args.silence_duration_s)
+        else:
+            audio_out_path = None
 
-    print(f"✅ 模型已下载至: {model_dir}")
-    
-    # 2. 写入复合格式输入
-    input_dir = Path("tmp_inputs")
-    input_dir.mkdir(exist_ok=True)
-    input_file = input_dir / f"{uuid.uuid4().hex}.txt"
-    input_file.write_text(prompt.strip())  # 🧠 prompt 是完整的一行含文本+图像+音频路径
+        prompt_path = os.path.join(output_dir, "prompt.txt")
+        with open(prompt_path, "w") as f:
+            f.write(text)
 
-    # 2. 构建命令
-    cmd = [
-        "torchrun",
-        "--standalone",
-        "--nproc_per_node=1",
-        "scripts/inference.py",
-        "--config", "configs/inference_1.3B.yaml",
-        "--input_file", str(input_file)
-    ]
+        print("💾 保存视频结果...")
+        result_path = save_video_as_grid_and_mp4(
+            video, output_dir, self.args.fps, prompt=text,
+            prompt_path=prompt_path,
+            audio_path=audio_out_path,
+            prefix="result"
+        )
 
-    # 3. 运行推理
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    # 4. 你需要根据 inference.py 的逻辑来提取输出路径
-    print("STDOUT:\n", result.stdout)
-    print("STDERR:\n", result.stderr)
-
-    # 5. 假设输出图像保存在 output/ 目录
-    output_path = Path("output")  # ← 按照实际输出位置修改
-    if output_path.exists():
-        files = list(output_path.glob("*.png"))  # 假设生成的是 PNG
-        if files:
-            return str(files[0])
-    
-    return "No output generated"
+        # 返回 mp4 文件
+        return Path(result_path)
