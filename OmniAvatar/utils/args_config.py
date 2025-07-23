@@ -4,6 +4,13 @@ import argparse
 import yaml
 args = None
 
+def set_args(a):
+    global _args
+    _args = a
+
+def get_args():
+    return _args
+
 def parse_hp_string(hp_string):
     result = {}
     for pair in hp_string.split(','):
@@ -36,7 +43,7 @@ def parse_hp_string(hp_string):
             result[key.strip()] = value
     return result
 
-def parse_args():
+def parse_args(argv=None):
     global args
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
     parser.add_argument("--config", type=str, required=True, help="Path to YAML config file.")
@@ -48,7 +55,7 @@ def parse_args():
     parser.add_argument("--infer", action='store_true')
     parser.add_argument("-hp", "--hparams", type=str, default="")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # 读取 YAML 配置（如果提供了 --config 参数）
     if args.config:
@@ -117,3 +124,8 @@ def convert_namespace_to_dict(namespace):
         except (TypeError, OverflowError):
             result[key] = str(value)  # 将不可序列化的对象转为字符串表示
     return result
+
+args = parse_args(["--config", "configs/inference_1.3B.yaml"])
+args.input_file = None
+args.debug = True
+set_args(args)

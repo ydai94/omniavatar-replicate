@@ -4,6 +4,7 @@
 build:
   # set to true if your model requires a GPU
   gpu: true
+  cuda: "11.8"
 
   # a list of ubuntu apt packages to install
   # system_packages:
@@ -13,11 +14,10 @@ build:
     - ffmpeg
     
   # python version in the form '3.11' or '3.11.4'
-  python_version: "3.13"
+  python_version: "3.11"
 
   # path to a Python requirements.txt file
   python_requirements: requirements.txt
-
   # commands run after the environment is setup
   # run:
   #   - "echo env is ready!"

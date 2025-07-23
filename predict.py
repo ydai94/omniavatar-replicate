@@ -51,11 +51,11 @@ from pathlib import Path as SysPath
 #         raise RuntimeError("No output file generated.")
 
 from cog import BasePredictor, Input, Path
-from inference import WanInferencePipeline, set_seed
+from OmniAvatar.utils.pipeline import WanInferencePipeline, set_seed
 from OmniAvatar.utils.args_config import parse_args
 from OmniAvatar.utils.audio_preprocess import add_silence_to_audio_ffmpeg
 from OmniAvatar.utils.io_utils import save_video_as_grid_and_mp4
-
+from OmniAvatar.utils.args_config import get_args
 import os
 import uuid
 import torch
@@ -64,9 +64,8 @@ import shutil
 class Predictor(BasePredictor):
     def setup(self):
         print("🚀 初始化模型...")
-        self.args = parse_args()
-        self.args.input_file = None  # 禁止批处理
-        self.args.debug = True       # 允许输出
+        
+        self.args = get_args()
         self.pipe = WanInferencePipeline(self.args)
         set_seed(self.args.seed)
 

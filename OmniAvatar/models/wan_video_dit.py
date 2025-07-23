@@ -6,7 +6,7 @@ from typing import Tuple, Optional
 from einops import rearrange
 from ..utils.io_utils import hash_state_dict_keys
 from .audio_pack import AudioPack
-from ..utils.args_config import args
+from ..utils.args_config import args,get_args
 from xfuser.core.distributed import (get_sequence_parallel_rank,
                                      get_sequence_parallel_world_size,
                                      get_sp_group)
@@ -27,7 +27,8 @@ try:
     SAGE_ATTN_AVAILABLE = True
 except ModuleNotFoundError:
     SAGE_ATTN_AVAILABLE = False
-    
+
+args = get_args()
     
 def flash_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, num_heads: int, compatibility_mode=False):
     if compatibility_mode:
