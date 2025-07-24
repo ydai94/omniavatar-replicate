@@ -135,6 +135,48 @@ def save_wav(audio, audio_path):
 
     return True
 
+def save_merged_video(
+    video_batch: torch.Tensor,
+    save_path: str,
+    fps: float = 5,
+    audio=None,
+    audio_path=None,
+    sample_rate=16000,
+):
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    all_frames = []
+
+    for vid in video_batch:
+        for frame in vid:
+            frame = rearrange(frame, "c h w -> h w c")
+            frame = (255.0 * frame).clamp(0, 255).cpu().numpy().astype(np.uint8)
+            all_frames.append(frame)
+
+    with tempfile.TemporaryDirectory() as tmp_path:
+        tmp_mp4 = os.path.join(tmp_path, "tmp.mp4")
+        with imageio.get_writer(tmp_mp4, fps=fps) as writer:
+            for frame in all_frames:
+                writer.append_data(frame)
+
+        # 拼接音频
+        if audio is not None or audio_path is not None:
+            if audio is not None:
+                if isinstance(audio, torch.Tensor) and audio.ndim == 2:
+                    audio = torch.cat([a for a in audio], dim=-1)
+                audio_path = os.path.join(tmp_path, "merged_audio.mp3")
+                save_wav(audio, audio_path, sample_rate)
+
+            merged_path = tmp_mp4[:-4] + "_with_audio.mp4"
+            cmd = f'ffmpeg -i {tmp_mp4} -i {audio_path} -v quiet -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac {merged_path} -y'
+            subprocess.check_call(cmd, stdout=None, stdin=subprocess.PIPE, shell=True)
+            subprocess.run([f"cp {merged_path} {save_path}"], check=True, shell=True)
+        else:
+            subprocess.run([f"cp {tmp_mp4} {save_path}"], check=True, shell=True)
+
+        print(f"✅ Merged video with audio saved to {save_path}")
+        return save_path
+
+
 def save_video_as_grid_and_mp4(video_batch: torch.Tensor, save_path: str, fps: float = 5,prompt=None, prompt_path=None, audio=None, audio_path=None, prefix=None):
     os.makedirs(save_path, exist_ok=True)
     out_videos = []

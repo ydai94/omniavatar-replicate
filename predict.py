@@ -65,38 +65,84 @@ from cog import BasePredictor, Input, Path
 from OmniAvatar.utils.pipeline import WanInferencePipeline, set_seed
 from OmniAvatar.utils.args_config import parse_args
 from OmniAvatar.utils.audio_preprocess import add_silence_to_audio_ffmpeg
-from OmniAvatar.utils.io_utils import save_video_as_grid_and_mp4
+from OmniAvatar.utils.io_utils import save_video_as_grid_and_mp4, save_merged_video
 from OmniAvatar.utils.args_config import get_args
 import os
 import uuid
 import torch
 import shutil
+from io import BytesIO
+import requests
+from PIL import Image
+import tempfile
+from typing import Union
+from cog import File
 
 class Predictor(BasePredictor):
     def setup(self):
-        print("🚀 初始化模型...")
-        download_if_not_exists("OmniAvatar/OmniAvatar-1.3B", "pretrained_models/OmniAvatar-1.3B")
-        download_if_not_exists("Wan-AI/Wan2.1-T2V-1.3B", "pretrained_models/Wan2.1-T2V-1.3B")
-        download_if_not_exists("facebook/wav2vec2-base-960h", "pretrained_models/wav2vec2-base-960h")
         self.args = get_args()
         self.pipe = WanInferencePipeline(self.args)
         set_seed(self.args.seed)
 
+    def download_image(self, url: str) -> str:
+        try:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            image = Image.open(BytesIO(response.content)).convert("RGB")
+            tmp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            image.save(tmp_file.name)
+            return tmp_file.name
+        except Exception as e:
+            raise FileNotFoundError(f"图像下载失败: {url}\n错误信息: {e}")
+
+    def download_audio(self, url: str) -> str:
+        try:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            tmp_file = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+            with open(tmp_file.name, "wb") as f:
+                f.write(response.content)
+            return tmp_file.name
+        except Exception as e:
+            raise FileNotFoundError(f"音频下载失败: {url}\n错误信息: {e}")
+
+    def _save_to_tmp_if_filelike(self, input_data: Union[str, File], suffix: str = "", media_type: str = "image") -> str:
+        if isinstance(input_data, File):
+            return input_data.path
+        elif isinstance(input_data, str):
+            if input_data.startswith("http://") or input_data.startswith("https://"):
+                if media_type == "image":
+                    return self.download_image(input_data)
+                elif media_type == "audio":
+                    return self.download_audio(input_data)
+                else:
+                    raise ValueError(f"Unsupported media_type: {media_type}")
+            else:
+                return input_data
+        else:
+            raise ValueError(f"Unsupported input type: {type(input_data)}")
+
     def predict(
         self,
         prompt: str = Input(description="文本提示"),
-        image_path: str = Input(default=None, description="图像路径"),
-        audio_path: str = Input(default=None, description="音频路径"),
+        image: Union[str, File] = Input(description="图像路径"),
+        audio: Union[str, File] = Input(description="音频路径"),
     ) -> Path:
         print("📝 接收输入:", prompt)
         text = prompt
-        if image_path and not os.path.exists(image_path):
-            raise FileNotFoundError(f"图像路径无效: {image_path}")
-        if audio_path and not os.path.exists(audio_path):
-            raise FileNotFoundError(f"音频路径无效: {audio_path}")
+        if image is None:
+            raise FileNotFoundError(f"图像路径无效: {image}")
+        if audio is None:
+            raise FileNotFoundError(f"音频路径无效: {audio}")
 
         output_dir = f"outputs/{uuid.uuid4().hex}"
         os.makedirs(output_dir, exist_ok=True)
+
+        # 支持本地文件句柄或 URL/路径
+        image_path = self._save_to_tmp_if_filelike(image, suffix=".jpg", media_type="image")
+        audio_path = self._save_to_tmp_if_filelike(audio, suffix=".wav", media_type="audio")
 
         # 添加静音段
         if self.args.silence_duration_s > 0 and audio_path:
@@ -113,7 +159,7 @@ class Predictor(BasePredictor):
             seq_len=self.args.seq_len
         )
 
-        # 添加一帧延迟音频
+        # 添加延迟音频
         if audio_path and self.args.use_audio:
             audio_out_path = os.path.join(output_dir, "audio_out.wav")
             add_silence_to_audio_ffmpeg(audio_path, audio_out_path, 1.0 / self.args.fps + self.args.silence_duration_s)
@@ -125,12 +171,7 @@ class Predictor(BasePredictor):
             f.write(text)
 
         print("💾 保存视频结果...")
-        result_path = save_video_as_grid_and_mp4(
-            video, output_dir, self.args.fps, prompt=text,
-            prompt_path=prompt_path,
-            audio_path=audio_out_path,
-            prefix="result"
-        )
+        output_path = os.path.join(output_dir, "output.mp4")
+        merged_path = save_merged_video(video, output_path, self.args.fps, audio_path=audio_out_path)
 
-        # 返回 mp4 文件
-        return Path(result_path)
+        return Path(merged_path)

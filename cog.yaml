@@ -4,7 +4,7 @@
 build:
   # set to true if your model requires a GPU
   gpu: true
-  cuda: "11.8"
+  cuda: "12.4"
 
   # a list of ubuntu apt packages to install
   # system_packages:
@@ -19,7 +19,8 @@ build:
   # path to a Python requirements.txt file
   python_requirements: requirements.txt
   # commands run after the environment is setup
-  # run:
+  run:
+      - pip install flash-attn --no-build-isolation
   #   - "echo env is ready!"
   #   - "echo another command if needed"
 
